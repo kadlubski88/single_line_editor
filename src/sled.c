@@ -16,7 +16,7 @@
 #include <string.h>
 #include <fcntl.h>
 
-#define VERSION "v0.2.0"
+#define VERSION "v0.3.0"
 #define BUFFER_LENGTH 1024
 #define OPTION_BYPASS 0x1
 #define OPTION_PRINT 0x2
@@ -25,9 +25,15 @@
 #define OPTION_FILE_NO_LINE_FEED 0x10
 #define KEY_ESCAPE 27
 #define KEY_OPEN_BRACKET 91
+#define KEY_DOWN 66
 #define KEY_RIGHT 67
 #define KEY_LEFT 68
 #define KEY_DELETE 127
+#define MODE_NAVI 0
+#define MODE_EDIT 1
+#define MODE_APPEND 2
+#define MODE_INPUT 3
+#define TAB_SPACES 3
 
 //######################
 //# Function prototype #
@@ -36,7 +42,7 @@
 char get_next_char(int stdin_fd);
 int insert_char(char *text, char character, int target_index);
 int remove_char(char *text, int target_index);
-void redraw(FILE *data_stream, char *text, int cursor_index);
+void redraw(FILE *data_stream, char mode_char, char *text, int cursor_index);
 void early_exit(int return_code, struct termios *terminal_settings, const char *error_print, int stdin_fd);
 void print_help(void);
 
@@ -64,6 +70,9 @@ int main(int argc, char *argv[]) {
     char character = '\0';
     int cursor_index = 0;
     int option_flags = 0;
+    int state = MODE_INPUT;
+
+    char mode_char[] = {'N', 'E', 'A', 'I'};
 
     //####################
     //# Argument parsing #
@@ -76,6 +85,10 @@ int main(int argc, char *argv[]) {
         //help option
         case 'h':
             print_help();
+            exit(EXIT_SUCCESS);
+        //print version
+        case 'v':
+            printf("%s\n", VERSION);
             exit(EXIT_SUCCESS);
         //bypass option
         case 'b':
@@ -123,6 +136,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+
     if ((fgets(text_buffer, BUFFER_LENGTH, data_stream_in)) == NULL) {
         fprintf(stderr, "nothing to read\n");
         exit(EXIT_FAILURE);
@@ -134,13 +148,17 @@ int main(int argc, char *argv[]) {
         text_buffer[initial_buffer_length - 1] = '\0';
     }
 
-    //close data stream to file or pipe
-    fclose(data_stream_in);
+    //close pipe
+    if (data_stream_in == stdin) {
+        fclose(data_stream_in);
+    }
     
-
     //bypass the all edit text area
     if (option_flags & OPTION_BYPASS) {
+        fclose(data_stream_in);
         goto bypass_edit;
+    } else {
+        state = MODE_NAVI;
     }
 
     //#############
@@ -156,13 +174,14 @@ int main(int argc, char *argv[]) {
     term_settings_new.c_lflag &= ~(ICANON | ECHO);
     tcsetattr(stdin_fd, TCSANOW, &term_settings_new);
 
+    //open terminal to write
     if ((tty = fopen("/dev/tty", "w")) == NULL) {
         fprintf(stderr, "not able to open the terminal\n");
         exit(EXIT_FAILURE);
     }
+
     //print the initial text
-    fprintf(tty, "%s\r", text_buffer);
-    fflush(tty);
+    redraw(tty, mode_char[state], text_buffer, cursor_index);
 
     //editor loop
     while ((character = get_next_char(stdin_fd)) != '\n') {
@@ -176,17 +195,28 @@ int main(int argc, char *argv[]) {
                 early_exit(EXIT_FAILURE, &term_settings_old, "wrong exit squence", stdin_fd);
             }
             switch (get_next_char(stdin_fd)) {
+                case KEY_DOWN:
+                    if (state == MODE_NAVI) {
+                        if ((fgets(text_buffer, BUFFER_LENGTH, data_stream_in)) == NULL) {
+                            state = MODE_APPEND;
+                        }
+                        redraw(tty, mode_char[state], text_buffer, cursor_index);
+                        fclose(data_stream_in);
+                    }
+                    break;
                 case KEY_RIGHT:
+                    state = MODE_EDIT;
                     if (text_buffer[cursor_index++] == '\0') {
                         cursor_index--;
                     }
-                    fprintf(tty, "\033[%iG", cursor_index + 1);
+                    redraw(tty, mode_char[state], text_buffer, cursor_index);
                     break;
                 case KEY_LEFT:
+                    state = MODE_EDIT;
                     if (--cursor_index < 0) {
                         cursor_index++;
                     }
-                    fprintf(tty, "\033[%iG", cursor_index + 1);
+                    redraw(tty, mode_char[state], text_buffer, cursor_index);
                     break;
                 default:
                     //flush next character
@@ -195,21 +225,24 @@ int main(int argc, char *argv[]) {
                     break;
             } 
         } else if (character == KEY_DELETE) {
+            state = MODE_EDIT;
             if (--cursor_index < 0) {
                 cursor_index++;
             } else {
                 remove_char(text_buffer, cursor_index);
             }
-            redraw(tty, text_buffer, cursor_index);
+            redraw(tty, mode_char[state], text_buffer, cursor_index);
         } else {
+            state = MODE_EDIT;
             insert_char(text_buffer, character, cursor_index++);
-            redraw(tty, text_buffer, cursor_index);
+            redraw(tty, mode_char[state], text_buffer, cursor_index);
         }
         fflush(tty);
     }
     
     tcsetattr(stdin_fd, TCSANOW, &term_settings_old);
-    fprintf(tty, "\r");
+    //fprintf(tty, "\r");
+    fprintf(tty, "\r\033[K");
     fflush(tty);
 
     //editor loop end
@@ -272,11 +305,29 @@ int remove_char(char *text, int target_index) {
     return 0;
 }
 
-void redraw(FILE *data_stream, char *text, int cursor_index) {
+void redraw(FILE *data_stream, char mode_char, char *text, int cursor_index) {
+    char drawing_buffer[BUFFER_LENGTH];
+    int index_offset = 0;
+    int cursor_offset = 0;
+    int i = 0;
+    for (i; text[i] != '\0'; i++) {
+        if (text[i] == '\t') {
+            for (int j = 0; j < TAB_SPACES; j++) {
+                drawing_buffer[i + index_offset] = ' ';
+                index_offset++;
+                cursor_offset += (int) (i < cursor_index);
+            }
+            index_offset--;
+            cursor_offset -= (int) (i < cursor_index);
+        } else {
+            drawing_buffer[i + index_offset] = text[i];
+        }
+    }
+    drawing_buffer[i + index_offset] = '\0';
     fprintf(data_stream, "\r\033[K");
-    fprintf(data_stream, "%s", text);
-    fprintf(data_stream, "\033[%iG", cursor_index + 1);
-    //fflush(data_stream);
+    fprintf(data_stream, "[%c]%s",mode_char, drawing_buffer);
+    fprintf(data_stream, "\033[%iG", cursor_index + 1 + 3 + cursor_offset);
+    fflush(data_stream);
     return;
 }
 
@@ -300,6 +351,7 @@ void print_help(void) {
     "  -n               Print without trailing newline\n"
     "  -f <file path>   Specify an alternative output file\n"
     "  -m               Write to file without trailing newline\n"
+    "  -v               Print the version\n"
     "  -h               Print this help\n"
     "\nExample:\n"
     "  sled -p myfile.txt\n"
