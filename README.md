@@ -3,6 +3,7 @@ Single Line Editor (SLED) is a simple editor to edit a single line of a file dir
 
 ## Description:
 SLED is reading the first line of a file or from the pipe and allowed a quick inline text modification.
+Before the editing it is stil possible to access the next lines.
 The result can be written in the same file, another file, to stdout or both. 
 
 SLED is very polyvalent and can replace tee, cp, echo, cat, ... in many scenarios.
@@ -12,14 +13,17 @@ SLED is very polyvalent and can replace tee, cp, echo, cat, ... in many scenario
 sled [options] [file]
 ~~~
 ### Options:
-- -b: Bypass editing and print directly
-- -p: Print the line to stdout
-- -n: Print without trailing newline
-- -f \<file path>: Specify an alternative output file
-- -m: Write to file without trailing newline
-- -h: Print help
+- -a: Append to the output file.
+- -b: Bypass editing and print directly.
+- -p: Print the line to stdout.
+- -n: Print without trailing newline.
+- -f \<file path>: Specify an alternative output file.
+- -m: Write to file without trailing newline.
+- -v: Print version.
+- -h: Print help.
 
 ### Editing:
+- Down key in search mode to change the line where to edit 
 - Left and right key to move on the line.
 - Enter key to validate
 - Escape key to cancel and closing the editor.
@@ -46,11 +50,17 @@ sled -b -f destination.txt
 cat /proc/cpuinfo | grep "model name" | sled -f cpu.name
 ~~~  
 
-## Bugs
-- user key entries over pipe write 2 times the result in the terminal.
-- reading tab characters.
+## Installation
+Sled doesnt use not standard libraries, therefore it is very simple to compile it with gcc.
+~~~bash
+gcc -o sled src/sled.c
+chmod +x sled
+cp sled /usr/bin/sled
+~~~
 
 ## Todo
-- tab
-- Moving between lines with key up and down.
-- Regex to find a line to edit.
+- Ability to edit lines longer then the terminal.
+- Possibility to transform tab to multiple spaces.
+
+## Bugs
+- -
