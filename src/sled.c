@@ -23,23 +23,44 @@
 #define OPTION_OUTPUT_FILE 0x4
 #define OPTION_NO_LINE_FEED 0x8
 #define OPTION_FILE_NO_LINE_FEED 0x10
-#define KEY_ESCAPE 27
-#define KEY_OPEN_BRACKET 91
-#define KEY_DOWN 66
-#define KEY_RIGHT 67
-#define KEY_LEFT 68
-#define KEY_DELETE 127
-#define MODE_NAVI 0
-#define MODE_EDIT 1
-#define MODE_APPEND 2
-#define MODE_INPUT 3
+#define OPTION_APPEND 0x20
 #define TAB_SPACES 3
+
+//##############################
+//# Global variable definition #
+//##############################
+
+typedef enum{
+    MODE_NAVI = 'N',
+    MODE_EDIT = 'E',
+    MODE_APPEND = 'A',
+    MODE_INPUT = 'I',
+    MODE_SEARCH = 'S'
+}edit_state;
+
+typedef enum {
+    KEY_NOKEY = 0,
+    KEY_ESCAPE = 27,
+    KEY_DELETE = 3,
+    KEY_DOWN = 66,
+    KEY_RIGHT = 67,
+    KEY_LEFT = 68,
+    KEY_BACKSPACE = 127,
+    KEY_CHAR = 128,
+    KEY_SPECIAL = '~',
+    KEY_ENTER = '\n',
+    KEY_TAB = '\t',
+    KEY_UNKNOWN = -1
+}key_type;
+
+struct pollfd pfd = { STDIN_FILENO, POLLIN, 0 };
+struct termios term_settings_new, term_settings_old;
 
 //######################
 //# Function prototype #
 //######################
 
-char get_next_char(int stdin_fd);
+key_type get_next_key(int stdin_fd, char *value);
 int insert_char(char *text, char character, int target_index);
 int remove_char(char *text, int target_index);
 void redraw(FILE *data_stream, char mode_char, char *text, int cursor_index);
@@ -52,27 +73,25 @@ void print_help(void);
 
 int main(int argc, char *argv[]) {
 
-    //###########################
-    //# Variable initialisation #
-    //###########################
+    //#######################
+    //# Variable definition #
+    //#######################
 
     FILE *data_stream_in = stdin;
     FILE *data_stream_out = NULL;
     FILE *tty = NULL;
     int stdin_fd;
-    
-    struct termios term_settings_new, term_settings_old;
-    struct pollfd pfd = { STDIN_FILENO, POLLIN, 0 };
-
     char text_buffer[BUFFER_LENGTH];
-    size_t initial_buffer_length;
-    char *output_file_name = NULL;
-    char character = '\0';
+
+    key_type next_key = KEY_UNKNOWN;
+    char next_value = '\0';
+    edit_state actual_mode = MODE_SEARCH;
+    
     int cursor_index = 0;
     int option_flags = 0;
-    int state = MODE_INPUT;
 
-    char mode_char[] = {'N', 'E', 'A', 'I'};
+    char output_file_open_mode[] = "w";
+    char *output_file_name = NULL;
 
     //####################
     //# Argument parsing #
@@ -90,6 +109,12 @@ int main(int argc, char *argv[]) {
         case 'v':
             printf("%s\n", VERSION);
             exit(EXIT_SUCCESS);
+        //append option
+        case 'a':
+            option_flags |= OPTION_APPEND;
+            output_file_open_mode[0] = 'a';
+            argc--;
+            break;    
         //bypass option
         case 'b':
             option_flags |= (OPTION_BYPASS | OPTION_PRINT);
@@ -136,16 +161,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-
+    //read first line of file or pipe
     if ((fgets(text_buffer, BUFFER_LENGTH, data_stream_in)) == NULL) {
         fprintf(stderr, "nothing to read\n");
         exit(EXIT_FAILURE);
     }
-
-    //make sure there is no line feed at the end of the text
-    initial_buffer_length = strlen(text_buffer);
-    if (initial_buffer_length > 0 && text_buffer[initial_buffer_length - 1] == '\n') {
-        text_buffer[initial_buffer_length - 1] = '\0';
+    if (strlen(text_buffer) > 0 && text_buffer[strlen(text_buffer) - 1] == '\n') {
+        text_buffer[strlen(text_buffer) - 1] = '\0';
     }
 
     //close pipe
@@ -157,8 +179,6 @@ int main(int argc, char *argv[]) {
     if (option_flags & OPTION_BYPASS) {
         fclose(data_stream_in);
         goto bypass_edit;
-    } else {
-        state = MODE_NAVI;
     }
 
     //#############
@@ -181,67 +201,58 @@ int main(int argc, char *argv[]) {
     }
 
     //print the initial text
-    redraw(tty, mode_char[state], text_buffer, cursor_index);
+    redraw(tty, actual_mode, text_buffer, cursor_index);
 
     //editor loop
-    while ((character = get_next_char(stdin_fd)) != '\n') {
-        if (character == KEY_ESCAPE) { 
-            //possible escape
-            if (poll(&pfd, 1, 50) == 0) {
-                fprintf(tty, "\r\033[K");
-                early_exit(EXIT_SUCCESS, &term_settings_old, NULL, stdin_fd);
-            }
-            if (get_next_char(stdin_fd) != KEY_OPEN_BRACKET) {
-                early_exit(EXIT_FAILURE, &term_settings_old, "wrong exit squence", stdin_fd);
-            }
-            switch (get_next_char(stdin_fd)) {
-                case KEY_DOWN:
-                    if (state == MODE_NAVI) {
-                        if ((fgets(text_buffer, BUFFER_LENGTH, data_stream_in)) == NULL) {
-                            state = MODE_APPEND;
-                        }
-                        redraw(tty, mode_char[state], text_buffer, cursor_index);
-                        fclose(data_stream_in);
-                    }
-                    break;
-                case KEY_RIGHT:
-                    state = MODE_EDIT;
-                    if (text_buffer[cursor_index++] == '\0') {
-                        cursor_index--;
-                    }
-                    redraw(tty, mode_char[state], text_buffer, cursor_index);
-                    break;
-                case KEY_LEFT:
-                    state = MODE_EDIT;
-                    if (--cursor_index < 0) {
-                        cursor_index++;
-                    }
-                    redraw(tty, mode_char[state], text_buffer, cursor_index);
-                    break;
-                default:
-                    //flush next character
-                    get_next_char(stdin_fd);
-                    continue;
-                    break;
-            } 
-        } else if (character == KEY_DELETE) {
-            state = MODE_EDIT;
-            if (--cursor_index < 0) {
-                cursor_index++;
-            } else {
-                remove_char(text_buffer, cursor_index);
-            }
-            redraw(tty, mode_char[state], text_buffer, cursor_index);
-        } else {
-            state = MODE_EDIT;
-            insert_char(text_buffer, character, cursor_index++);
-            redraw(tty, mode_char[state], text_buffer, cursor_index);
+    while ((next_key = get_next_key(stdin_fd, &next_value)) != KEY_ENTER) {
+        if (next_key == KEY_ESCAPE) {
+            fprintf(tty, "\r\033[K");
+            early_exit(EXIT_SUCCESS, &term_settings_old, NULL, stdin_fd);
         }
-        fflush(tty);
+        switch (next_key) {
+            case KEY_DOWN:
+                if (actual_mode == MODE_SEARCH) {
+                    if ((fgets(text_buffer, BUFFER_LENGTH, data_stream_in)) == NULL) {
+                        actual_mode = MODE_APPEND;
+                        option_flags |= OPTION_APPEND;
+                        output_file_open_mode[0] = 'a';
+                    }
+                    if (strlen(text_buffer) > 0 && text_buffer[strlen(text_buffer) - 1] == '\n') {
+                        text_buffer[strlen(text_buffer) - 1] = '\0';
+                    }
+                }
+                break;
+            case KEY_LEFT:
+                actual_mode = MODE_NAVI;
+                if (--cursor_index < 0) {
+                    cursor_index++;
+                }
+                break;
+            case KEY_RIGHT:
+                actual_mode = MODE_NAVI;
+                if (text_buffer[cursor_index++] == '\0') {
+                    cursor_index--;
+                }
+                break;
+            case KEY_BACKSPACE:
+                actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                if (--cursor_index < 0) {
+                    cursor_index++;
+                } else {
+                    remove_char(text_buffer, cursor_index);
+                }
+                break;  
+            case KEY_CHAR:
+                actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                insert_char(text_buffer, next_value, cursor_index++);
+                break;
+            default:
+                break;
+        }
+        redraw(tty, actual_mode, text_buffer, cursor_index);
     }
     
     tcsetattr(stdin_fd, TCSANOW, &term_settings_old);
-    //fprintf(tty, "\r");
     fprintf(tty, "\r\033[K");
     fflush(tty);
 
@@ -258,7 +269,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (option_flags & OPTION_OUTPUT_FILE) {
-        if ((data_stream_out = fopen(output_file_name, "w")) == NULL) {
+        if ((data_stream_out = fopen(output_file_name, output_file_open_mode)) == NULL) {
             fprintf(stderr, "not able to open the destination file %s\n", output_file_name);
             exit(EXIT_FAILURE);
         }
@@ -272,10 +283,58 @@ int main(int argc, char *argv[]) {
 //# Function definition #
 //#######################
 
-char get_next_char(int stdin_fd) {
+key_type get_next_key(int stdin_fd, char *value) {
     char buffer_char;
-    read(stdin_fd, &buffer_char, 1);
-    return(buffer_char);
+    int last_key = KEY_UNKNOWN;
+    int escape_sequence = 0;
+    while (read(stdin_fd, &buffer_char, 1) > 0) {
+        *value = buffer_char;
+        //Escape key
+        if (buffer_char == KEY_ESCAPE) {
+            if (poll(&pfd, 1, 20) == 0) {
+                return(KEY_ESCAPE);
+            }
+            escape_sequence = 1;
+            continue;
+        }
+        //ANSI escape codes
+        if (escape_sequence) {
+            if (buffer_char == '[') {
+                continue;
+            }
+            switch ((int)buffer_char) {
+                case KEY_DELETE:
+                    if (poll(&pfd, 1, 20) == 0) {
+                        return(KEY_UNKNOWN);
+                    }
+                    last_key = (int)buffer_char;
+                    continue;
+                case KEY_SPECIAL:
+                    return(last_key);
+                case KEY_DOWN:
+                case KEY_LEFT:
+                case KEY_RIGHT:
+                    return((int)buffer_char);
+                default:
+                    return(KEY_UNKNOWN);
+            }
+        }
+        //ASCII printable characters
+        if (buffer_char >= ' ' && buffer_char <= '~') {
+            return(KEY_CHAR);
+        }
+        //ASCII unprintable control codes
+        switch ((int)buffer_char) {
+            case KEY_ENTER:
+            case KEY_BACKSPACE:
+                return((int)buffer_char);
+            case KEY_TAB:
+                return(KEY_CHAR);
+            default:
+                return(KEY_UNKNOWN);
+        }
+    }
+    return(KEY_UNKNOWN);
 }
 
 int insert_char(char *text, char character, int target_index) {
@@ -311,6 +370,9 @@ void redraw(FILE *data_stream, char mode_char, char *text, int cursor_index) {
     int cursor_offset = 0;
     int i = 0;
     for (i; text[i] != '\0'; i++) {
+        if (text[i] == '\n') {
+            continue;
+        }
         if (text[i] == '\t') {
             for (int j = 0; j < TAB_SPACES; j++) {
                 drawing_buffer[i + index_offset] = ' ';
@@ -346,6 +408,7 @@ void print_help(void) {
     "Usage:\n"
     "  sled [options] [file]\n\n"
     "Options:\n"
+    "  -a               Append text to the end of the file\n"
     "  -b               Bypass editing and print directly\n"
     "  -p               Print the line to stdout\n"
     "  -n               Print without trailing newline\n"
