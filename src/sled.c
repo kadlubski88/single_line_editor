@@ -34,8 +34,6 @@ typedef enum{
     MODE_NAVI = 'N',
     MODE_EDIT = 'E',
     MODE_APPEND = 'A',
-    MODE_INPUT = 'I',
-    MODE_SEARCH = 'S'
 }edit_state;
 
 typedef enum {
@@ -85,7 +83,7 @@ int main(int argc, char *argv[]) {
 
     key_type next_key = KEY_UNKNOWN;
     char next_value = '\0';
-    edit_state actual_mode = MODE_SEARCH;
+    edit_state actual_mode = MODE_NAVI;
     
     int cursor_index = 0;
     int option_flags = 0;
@@ -211,7 +209,7 @@ int main(int argc, char *argv[]) {
         }
         switch (next_key) {
             case KEY_DOWN:
-                if (actual_mode == MODE_SEARCH) {
+                if (actual_mode == MODE_NAVI) {
                     if ((fgets(text_buffer, BUFFER_LENGTH, data_stream_in)) == NULL) {
                         actual_mode = MODE_APPEND;
                         option_flags |= OPTION_APPEND;
@@ -223,13 +221,13 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case KEY_LEFT:
-                actual_mode = MODE_NAVI;
+                actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
                 if (--cursor_index < 0) {
                     cursor_index++;
                 }
                 break;
             case KEY_RIGHT:
-                actual_mode = MODE_NAVI;
+                actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
                 if (text_buffer[cursor_index++] == '\0') {
                     cursor_index--;
                 }
