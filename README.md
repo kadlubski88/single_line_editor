@@ -6,7 +6,7 @@ SLED is reading the first line of a file or from the pipe and allowed a quick in
 Before the editing it is stil possible to access the next lines.
 The result can be written in the same file, another file, to stdout or both. 
 
-SLED is very polyvalent and can replace tee, cp, echo, cat, ... in many scenarios.
+SLED is very polyvalent and can replace tee, cp, echo, cat, touch, ... in many scenarios.
 
 ## Usage:
 ~~~
@@ -22,11 +22,18 @@ sled [options] [file]
 - -v: Print version.
 - -h: Print help.
 
-### Editing:
-- Down key in search mode to change the line where to edit 
-- Left and right key to move on the line.
-- Enter key to validate
-- Escape key to cancel and closing the editor.
+### Modes:
+- [C]:  The file to edit doesn't exists and will be created with file mode 644.
+- [N]:  Navigate forward through the lines, change mode to [A] if passed the last line.
+- [A]:  Will append the edited text to the end of the file.
+- [E]:  Edit mode, once activated the line is locked.
+
+### Supported controll keys:
+- Arrow down key:         Navigate forward through the lines.
+- Arrow left/right keys:  Navigate the cursor on the line(only in edit mode).
+- Enter key:              Save the edited line and close the program.
+- Escape key:             Cancel the edition and close the program.
+- Backspace key:          Erase the character in front of the cursor(only in edit mode).
 
 ## Example:
 ### Edit the first line of a file
