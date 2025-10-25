@@ -34,6 +34,7 @@ typedef enum{
     MODE_NAVI = 'N',
     MODE_EDIT = 'E',
     MODE_APPEND = 'A',
+    MODE_CREATE = 'C'
 }edit_state;
 
 typedef enum {
@@ -64,6 +65,7 @@ int remove_char(char *text, int target_index);
 void redraw(FILE *data_stream, char mode_char, char *text, int cursor_index);
 void early_exit(int return_code, struct termios *terminal_settings, const char *error_print, int stdin_fd);
 void print_help(void);
+int touch_file(char *file_name);
 
 //########
 //# Main #
@@ -149,8 +151,12 @@ int main(int argc, char *argv[]) {
     }
     //source file (and destination file if -f not setted)
     if (argc > 0) {
+        if (touch_file(*argv) != EXIT_SUCCESS) {
+            fprintf(stderr, " unable to touch file \"%s\"\n", *argv);
+            exit(EXIT_FAILURE);
+        }
         if ((data_stream_in = fopen(*argv, "r")) == NULL) {
-            fprintf(stderr, "file \"%s\" doesn\'t exists\n", *argv);
+            fprintf(stderr, " unable to open file \"%s\" to read\n", *argv);
             exit(EXIT_FAILURE);
         }
         option_flags |= OPTION_OUTPUT_FILE;
@@ -161,11 +167,12 @@ int main(int argc, char *argv[]) {
 
     //read first line of file or pipe
     if ((fgets(text_buffer, BUFFER_LENGTH, data_stream_in)) == NULL) {
-        fprintf(stderr, "nothing to read\n");
-        exit(EXIT_FAILURE);
+        actual_mode = MODE_CREATE;
     }
     if (strlen(text_buffer) > 0 && text_buffer[strlen(text_buffer) - 1] == '\n') {
         text_buffer[strlen(text_buffer) - 1] = '\0';
+    } else {
+        text_buffer[0] = '\0';
     }
 
     //close pipe
@@ -221,19 +228,25 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case KEY_LEFT:
-                actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                if (actual_mode != MODE_CREATE) {
+                    actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                }
                 if (--cursor_index < 0) {
                     cursor_index++;
                 }
                 break;
             case KEY_RIGHT:
-                actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                if (actual_mode != MODE_CREATE) {
+                    actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                }
                 if (text_buffer[cursor_index++] == '\0') {
                     cursor_index--;
                 }
                 break;
             case KEY_BACKSPACE:
-                actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                if (actual_mode != MODE_CREATE) {
+                    actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                }
                 if (--cursor_index < 0) {
                     cursor_index++;
                 } else {
@@ -241,7 +254,9 @@ int main(int argc, char *argv[]) {
                 }
                 break;  
             case KEY_CHAR:
-                actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                if (actual_mode != MODE_CREATE) {
+                    actual_mode = option_flags & OPTION_APPEND ? MODE_APPEND : MODE_EDIT;
+                }
                 insert_char(text_buffer, next_value, cursor_index++);
                 break;
             default:
@@ -414,7 +429,27 @@ void print_help(void) {
     "  -m               Write to file without trailing newline\n"
     "  -v               Print the version\n"
     "  -h               Print this help\n"
+    "\nModes:\n"
+    "  [C]  The file to edit doesn't exists and will be created with file mode 644\n"
+    "  [N]  Navigate forward through the lines, change mode to [A] if passed the last line\n"
+    "  [A]  Will append the edited text to the end of the file\n"
+    "  [E]  Edit mode, once activated the line is locked\n"
+    "\nSupported controll keys:\n"
+    "  -Arrow down key:         Navigate forward through the lines\n"
+    "  -Arrow left/right keys:  Navigate the cursor on the line(only in edit mode)\n"
+    "  -Enter key:              Accept the edited line\n"
+    "  -Escape key:             Cancel the edition\n"
+    "  -Backspace key:          Erase the character in front of the cursor(only in edit mode)\n"
     "\nExample:\n"
     "  sled -p myfile.txt\n"
     );
+}
+
+int touch_file(char *file_name) {
+    int fd;
+    if ((fd = open(file_name, O_WRONLY | O_CREAT, 0664)) < 0) {
+        return(EXIT_FAILURE);
+    }
+    close(fd);
+    return(EXIT_SUCCESS);
 }
