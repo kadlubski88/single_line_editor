@@ -16,7 +16,7 @@
 #include <string.h>
 #include <fcntl.h>
 
-#define VERSION "v0.3.0"
+#define VERSION "v0.4.0"
 #define BUFFER_LENGTH 1024
 #define OPTION_BYPASS 0x1
 #define OPTION_PRINT 0x2
